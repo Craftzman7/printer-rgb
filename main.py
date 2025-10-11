@@ -1,0 +1,201 @@
+from machine import Pin
+from patterns.finish import Finish
+from patterns.progress import Progress
+from utime import sleep
+from modules.mqtt_as import MQTTClient, config
+# from modules.umqtt.simple import MQTTClient
+import ssl
+import time
+import gc
+import json
+import neopixel
+import machine
+import network
+import asyncio
+from patterns.idle import Idle
+from patterns.error import Error
+from patterns.prepare import Prepare
+
+with open('settings.json', 'r') as f:
+    settings = json.load(f)
+
+debug_led = Pin('LED', Pin.OUT)
+
+serial = settings.get("serial", "none")
+brightness = settings.get("brightness", 0.5)
+num_leds = settings.get("num_leds", 64)
+led_pin = settings.get("led_pin", 4)
+mqtt_ip = settings.get("mqtt_ip", "192.168.1.117")
+current_pattern = Idle()
+frame_count = 0
+
+hms = []
+printer_chamber_light_on = False
+gcode = "IDLE"
+progress = 0
+
+start_time = time.time()
+
+np = neopixel.NeoPixel(machine.Pin(led_pin), num_leds)
+
+wlan = network.WLAN(network.STA_IF)
+wlan.active(True)
+def connect_to_wifi():
+    if not wlan.isconnected():
+        print('Connecting to network: ' + settings.get("ssid", "") + ":" + settings.get("wifi_password", ""))
+        wlan.connect(settings.get("ssid", ""), settings.get("wifi_password", ""))
+        for _ in range(20):
+            if wlan.isconnected():
+                break
+            sleep(1)
+        if not wlan.isconnected():
+            return False
+    print('Network config:', wlan.ifconfig())
+    return True
+
+if not connect_to_wifi():
+    print("Failed to connect to WiFi, restarting...")
+    for _ in range(3):
+        debug_led.toggle()
+        sleep(1.0)
+    machine.reset()
+
+def sub_cb(_, msg, __):
+    data = msg.decode('utf-8')
+    try:
+        data_dict = json.loads(data)
+    except:
+        print("Failed to parse JSON")
+        return
+
+    if "print" not in data_dict:
+        return
+
+    try:
+        light_status = data_dict["print"]["lights_report"][0]["mode"]
+        global printer_chamber_light_on 
+        if light_status == "on":
+            printer_chamber_light_on = True
+        else:
+            printer_chamber_light_on = False
+    except KeyError:
+        pass
+
+    try:
+        global hms
+        hms = data_dict["print"]["hms"]
+    except KeyError:
+        pass
+
+    try:
+        global gcode
+        gcode = data_dict["print"]["gcode_state"]
+    except KeyError:
+        pass
+
+    
+    try:
+        global progress
+        progress = int(data_dict["print"]["mc_percent"])
+    except KeyError:
+        pass
+
+async def update_pattern():
+    while True:
+        global current_pattern
+        if len(hms) > 0 or gcode == "FAILED" and not isinstance(current_pattern, Error):
+            current_pattern = Error()
+        elif gcode == "PRINTING" and not isinstance(current_pattern, Progress):
+            current_pattern = Progress()
+            pass
+        elif gcode == "IDLE" and printer_chamber_light_on and not isinstance(current_pattern, Idle):
+            current_pattern = Idle()
+        elif gcode == "IDLE" and not printer_chamber_light_on:
+            current_pattern = None
+        elif gcode == "PAUSED" and not isinstance(current_pattern, Progress):
+            # Orange progress bar
+            current_pattern = Progress(reached_color=(255, 165, 0))
+        elif gcode == "PREPARE" and not isinstance(current_pattern, Prepare):
+            current_pattern = Prepare()
+        elif gcode == "FINISH" and printer_chamber_light_on and not isinstance(current_pattern, Finish):
+            current_pattern = Finish()
+
+        if current_pattern:
+            global progress
+            current_pattern.update(time.time() - start_time, progress / 100.0)
+            # If pattern needs knowledge of strip length, provide it once.
+            if hasattr(current_pattern, 'num_leds'):
+                try:
+                    current_pattern.num_leds = num_leds
+                except Exception:
+                    pass
+            for i in range(num_leds):
+                color = current_pattern.at(i)
+                # Apply brightness
+                color = (int(color[0] * brightness), int(color[1] * brightness), int(color[2] * brightness))
+                np[i] = color
+            np.write()
+        else:
+            for i in range(num_leds):
+                np[i] = (0, 0, 0)
+            np.write()
+        # print("Pattern:", type(current_pattern).__name__ if current_pattern else "None", "GCode:", gcode, "Progress:", progress, "Chamber Light:", printer_chamber_light_on)
+
+        global frame_count
+        frame_count += 1
+        await asyncio.sleep_ms(10)
+
+context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+context.verify_mode = ssl.CERT_NONE
+
+topic = f'device/{serial}/report'
+
+config["server"] = mqtt_ip
+config["port"] = 8883
+config["wifi_pw"] = settings.get("wifi_password", "")
+config["ssid"] = settings.get("ssid", "")
+config["ssl"] = context
+config["password"] = 'public'
+config["user"] = 'emqx'
+# config["ssl_params"] = {'server_hostname': config["server"]}
+config["subs_cb"] = sub_cb
+config["keepalive"] = 3600
+
+async def main():
+    client = MQTTClient(config)
+    try:
+        await client.connect()
+        print("Finished connecting to MQTT")
+    except Exception as e:
+        print(e)
+        # machine.soft_reset()
+    await client.subscribe(topic, 0)
+    await client.publish(f'device/{serial}/request', '{"pushing": {"sequence_id": "0","command": "pushall","version": 1,"push_target": 1}}')
+    await asyncio.sleep(1.0)
+    asyncio.create_task(update_pattern())
+    debug_led.on()
+    while True:
+        gc.collect()
+        global frame_count
+        print("Proceesed frames:", frame_count)
+        frame_count = 0
+
+# async def main():
+#     client = MQTTClient(server=mqtt_ip, client_id="printer-rgb", port=8883, user='emqx', password='public', ssl=context)
+#     client.set_callback(sub_cb)
+#     try:
+#         client.connect()
+#         print("Finished connecting to MQTT")
+#     except Exception as e:
+#         print(e)
+#         # machine.soft_reset()
+#     asyncio.create_task(update_pattern())
+#     client.subscribe(topic, 0)
+#     client.publish(f'device/{serial}/request', '{"pushing": {"sequence_id": "0","command": "pushall","version": 1,"push_target": 1}}')
+#     await asyncio.sleep(0.01)
+
+#     while True:
+#         client.check_msg()
+#         await asyncio.sleep_ms(100)
+
+asyncio.run(main())
