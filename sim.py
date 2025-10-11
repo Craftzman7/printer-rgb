@@ -1,5 +1,6 @@
 import sys
 from patterns.finish import Finish
+from patterns.paused import Paused
 from patterns.prepare import Prepare
 import time
 try:
@@ -31,15 +32,15 @@ class Simulator:
             self.font = None
 
         # Patterns to cycle through
-        self.patterns = [Idle(), Error(), Progress(), Finish(), Progress(reached_color=(255, 100, 0)), Prepare()]
-        self.pattern_names = ['Idle', 'Error', 'Progress', 'Finish', 'Paused Progress', 'Prepare']
+        self.patterns = [Idle(), Error(), Progress(), Finish(), Paused(), Prepare()]
+        self.pattern_names = ['Idle', 'Error', 'Progress', 'Finish', 'Paused', 'Prepare']
         self.current = 0
 
         self.running = True
         self.paused = False
         self.time_scale = 1.0
         self.print_time = 60.0  # default print time in seconds
-        self.brightness = 0.5
+        self.brightness = 1.0
         self.start_time = time.time()
         try:
             self.clock = pygame.time.Clock()

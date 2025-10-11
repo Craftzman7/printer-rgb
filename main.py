@@ -1,5 +1,6 @@
 from machine import Pin
 from patterns.finish import Finish
+from patterns.paused import Paused
 from patterns.progress import Progress
 from utime import sleep
 from modules.mqtt_as import MQTTClient, config
@@ -34,6 +35,8 @@ printer_chamber_light_on = False
 gcode = "IDLE"
 progress = 0
 
+main_thread_rgb_lock = True
+
 start_time = time.time()
 
 np = neopixel.NeoPixel(machine.Pin(led_pin), num_leds)
@@ -55,7 +58,7 @@ def connect_to_wifi():
 
 if not connect_to_wifi():
     print("Failed to connect to WiFi, restarting...")
-    for _ in range(3):
+    for _ in range(5):
         debug_led.toggle()
         sleep(1.0)
     machine.reset()
@@ -100,8 +103,15 @@ def sub_cb(_, msg, __):
     except KeyError:
         pass
 
+    del data_dict
+    del data
+
+
 async def update_pattern():
     while True:
+        global main_thread_rgb_lock
+        if main_thread_rgb_lock:
+            continue
         global current_pattern
         if len(hms) > 0 or gcode == "FAILED" and not isinstance(current_pattern, Error):
             current_pattern = Error()
@@ -114,7 +124,7 @@ async def update_pattern():
             current_pattern = None
         elif gcode == "PAUSED" and not isinstance(current_pattern, Progress):
             # Orange progress bar
-            current_pattern = Progress(reached_color=(255, 165, 0))
+            current_pattern = Paused()
         elif gcode == "PREPARE" and not isinstance(current_pattern, Prepare):
             current_pattern = Prepare()
         elif gcode == "FINISH" and printer_chamber_light_on and not isinstance(current_pattern, Finish):
@@ -143,6 +153,7 @@ async def update_pattern():
 
         global frame_count
         frame_count += 1
+        # print("Memory:", gc.mem_free(), "Frames:", frame_count)
         await asyncio.sleep_ms(10)
 
 context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
@@ -157,7 +168,6 @@ config["ssid"] = settings.get("ssid", "")
 config["ssl"] = context
 config["password"] = 'public'
 config["user"] = 'emqx'
-# config["ssl_params"] = {'server_hostname': config["server"]}
 config["subs_cb"] = sub_cb
 config["keepalive"] = 3600
 
@@ -168,7 +178,10 @@ async def main():
         print("Finished connecting to MQTT")
     except Exception as e:
         print(e)
-        # machine.soft_reset()
+        for _ in range(5):
+            debug_led.toggle()
+            await asyncio.sleep(1.0)
+        machine.reset()
     await client.subscribe(topic, 0)
     await client.publish(f'device/{serial}/request', '{"pushing": {"sequence_id": "0","command": "pushall","version": 1,"push_target": 1}}')
     await asyncio.sleep(1.0)
@@ -176,9 +189,21 @@ async def main():
     debug_led.on()
     while True:
         gc.collect()
-        global frame_count
-        print("Proceesed frames:", frame_count)
-        frame_count = 0
+        if not client.isconnected():
+            global main_thread_rgb_lock
+            main_thread_rgb_lock = True
+            debug_led.off()
+            for i in range(num_leds):
+                np[i] = (255, 0, 0)
+            np.write()
+        elif main_thread_rgb_lock:
+            main_thread_rgb_lock = False
+            debug_led.on()
+        else:
+            global frame_count
+            print("Memory:", gc.mem_free(), "Frames:", frame_count)
+            frame_count = 0
+        await asyncio.sleep(1.0)
 
 # async def main():
 #     client = MQTTClient(server=mqtt_ip, client_id="printer-rgb", port=8883, user='emqx', password='public', ssl=context)
@@ -192,10 +217,13 @@ async def main():
 #     asyncio.create_task(update_pattern())
 #     client.subscribe(topic, 0)
 #     client.publish(f'device/{serial}/request', '{"pushing": {"sequence_id": "0","command": "pushall","version": 1,"push_target": 1}}')
-#     await asyncio.sleep(0.01)
+#     # await asyncio.sleep(1.0)
 
 #     while True:
+#         global frame_count
+#         print("Memory:", gc.mem_free(), "Frames:", frame_count)
+#         frame_count = 0
 #         client.check_msg()
-#         await asyncio.sleep_ms(100)
+#         await asyncio.sleep(1.0)
 
 asyncio.run(main())
