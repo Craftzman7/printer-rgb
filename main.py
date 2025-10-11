@@ -105,7 +105,7 @@ def sub_cb(_, msg, __):
 
     del data_dict
     del data
-
+    gc.collect()
 
 async def update_pattern():
     while True:
@@ -186,13 +186,11 @@ async def main():
     await client.publish(f'device/{serial}/request', '{"pushing": {"sequence_id": "0","command": "pushall","version": 1,"push_target": 1}}')
     await asyncio.sleep(1.0)
     asyncio.create_task(update_pattern())
-    debug_led.on()
     while True:
         gc.collect()
         if not client.isconnected():
             global main_thread_rgb_lock
             main_thread_rgb_lock = True
-            debug_led.off()
             for i in range(num_leds):
                 np[i] = (255, 0, 0)
             np.write()
