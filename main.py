@@ -173,6 +173,7 @@ config["keepalive"] = 3600
 
 async def main():
     client = MQTTClient(config)
+    await asyncio.sleep(settings.get("wait_time", 15)) # wait for printer to be ready
     try:
         await client.connect()
         print("Finished connecting to MQTT")
@@ -183,14 +184,16 @@ async def main():
             await asyncio.sleep(1.0)
         machine.reset()
     await client.subscribe(topic, 0)
-    await client.publish(f'device/{serial}/request', '{"pushing": {"sequence_id": "0","command": "pushall","version": 1,"push_target": 1}}')
+    # await client.publish(f'device/{serial}/request', '{"pushing": {"sequence_id": "0","command": "pushall","version": 1,"push_target": 1}}')
     await asyncio.sleep(1.0)
     asyncio.create_task(update_pattern())
+    debug_led.on()
     while True:
         gc.collect()
         if not client.isconnected():
             global main_thread_rgb_lock
             main_thread_rgb_lock = True
+            debug_led.off()
             for i in range(num_leds):
                 np[i] = (255, 0, 0)
             np.write()
