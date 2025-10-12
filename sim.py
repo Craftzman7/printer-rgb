@@ -82,9 +82,8 @@ class Simulator:
             self.draw_text('Space: pause | Left/Right: speed | Up/Down: change pattern', ui_x, ui_y + 40)
 
             pygame.display.flip()
-            # Cap the frame rate to 10 FPS to keep CPU usage low during simulation.
             if self.clock:
-                self.clock.tick(10)
+                self.clock.tick(50)
 
     def draw_text(self, text, x, y, size=14, color=(200, 200, 200)):
         if self.font is not None and self.font.get_height() == size:
