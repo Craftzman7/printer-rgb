@@ -7,6 +7,7 @@ class Paused(Pattern):
         self.num_leds = 64  # Default value; will be set by caller if needed
         self.unreached_color = unreached_color
         self.reached_color = reached_color
+        self.all_same = False
 
     def at(self, pos):
         if pos < (self.progress * self.num_leds):

@@ -34,6 +34,7 @@ hms = []
 printer_chamber_light_on = False
 gcode = "IDLE"
 progress = 0
+stage = 0
 
 main_thread_rgb_lock = True
 
@@ -47,10 +48,12 @@ def connect_to_wifi():
     if not wlan.isconnected():
         print('Connecting to network: ' + settings.get("ssid", "") + ":" + settings.get("wifi_password", ""))
         wlan.connect(settings.get("ssid", ""), settings.get("wifi_password", ""))
-        for _ in range(20):
+        sleep(5)
+        for _ in range(2):
             if wlan.isconnected():
                 break
-            sleep(1)
+            wlan.connect(settings.get("ssid", ""), settings.get("wifi_password", ""))
+            sleep(5)
         if not wlan.isconnected():
             return False
     print('Network config:', wlan.ifconfig())
@@ -65,13 +68,14 @@ if not connect_to_wifi():
 
 def sub_cb(_, msg, __):
     data = msg.decode('utf-8')
+    if "print" not in data:
+        print(f"Encountered message with size of: {len(data)}, but print object not present, ignoring.")
+    else:
+        print(f"Got message with size of: {len(data)}, parsing.")
     try:
         data_dict = json.loads(data)
     except:
         print("Failed to parse JSON")
-        return
-
-    if "print" not in data_dict:
         return
 
     try:
@@ -103,53 +107,65 @@ def sub_cb(_, msg, __):
     except KeyError:
         pass
 
+    try:
+        global stage
+        stage = int(data_dict["print"]["stg_cur"])
+    except KeyError:
+        pass
+
     del data_dict
     del data
     gc.collect()
 
 async def update_pattern():
     while True:
+        pattern_changed = False
         global main_thread_rgb_lock
         if main_thread_rgb_lock:
             continue
         global current_pattern
         if len(hms) > 0 or gcode == "FAILED" and not isinstance(current_pattern, Error):
             current_pattern = Error()
-        elif gcode == "PRINTING" and not isinstance(current_pattern, Progress):
+            pattern_changed = True
+        elif gcode == "RUNNING" and stage == 0 and not isinstance(current_pattern, Progress):
             current_pattern = Progress()
-            pass
+            pattern_changed = True
         elif gcode == "IDLE" and printer_chamber_light_on and not isinstance(current_pattern, Idle):
             current_pattern = Idle()
+            pattern_changed = True
         elif gcode == "IDLE" and not printer_chamber_light_on:
             current_pattern = None
-        elif gcode == "PAUSED" and not isinstance(current_pattern, Progress):
+        elif gcode == "PAUSE" and not isinstance(current_pattern, Progress):
             # Orange progress bar
             current_pattern = Paused()
-        elif gcode == "PREPARE" and not isinstance(current_pattern, Prepare):
-            current_pattern = Prepare()
+            pattern_changed = True
         elif gcode == "FINISH" and printer_chamber_light_on and not isinstance(current_pattern, Finish):
             current_pattern = Finish()
+            pattern_changed = True
+        elif stage != 0 or gcode == "PREPARE" and not isinstance(current_pattern, Prepare):
+            current_pattern = Prepare() 
+            pattern_changed = True
+
+        if pattern_changed:
+            global num_leds
+            current_pattern.num_leds = num_leds
 
         if current_pattern:
             global progress
             current_pattern.update(time.time() - start_time, progress / 100.0)
-            # If pattern needs knowledge of strip length, provide it once.
-            if hasattr(current_pattern, 'num_leds'):
-                try:
-                    current_pattern.num_leds = num_leds
-                except Exception:
-                    pass
-            for i in range(num_leds):
-                color = current_pattern.at(i)
-                # Apply brightness
-                color = (int(color[0] * brightness), int(color[1] * brightness), int(color[2] * brightness))
-                np[i] = color
+            if current_pattern.all_same:
+                color = current_pattern.at(0)
+                for i in range(num_leds):
+                    np[i] = color
+            else:
+                for i in range(num_leds):
+                    color = current_pattern.at(i)
+                    np[i] = color
             np.write()
         else:
             for i in range(num_leds):
                 np[i] = (0, 0, 0)
             np.write()
-        # print("Pattern:", type(current_pattern).__name__ if current_pattern else "None", "GCode:", gcode, "Progress:", progress, "Chamber Light:", printer_chamber_light_on)
 
         global frame_count
         frame_count += 1
@@ -166,8 +182,8 @@ config["port"] = 8883
 config["wifi_pw"] = settings.get("wifi_password", "")
 config["ssid"] = settings.get("ssid", "")
 config["ssl"] = context
-config["password"] = 'public'
-config["user"] = 'emqx'
+config["password"] = settings.get("lan_access_code", "")
+config["user"] = 'bblp'
 config["subs_cb"] = sub_cb
 config["keepalive"] = 3600
 
@@ -182,10 +198,9 @@ async def main():
         for _ in range(5):
             debug_led.toggle()
             await asyncio.sleep(1.0)
-        machine.reset()
+        machine.soft_reset()
     await client.subscribe(topic, 0)
-    # await client.publish(f'device/{serial}/request', '{"pushing": {"sequence_id": "0","command": "pushall","version": 1,"push_target": 1}}')
-    await asyncio.sleep(1.0)
+    await client.publish(f'device/{serial}/request', '{"pushing":{"sequence_id": "0", "command": "pushall"}}')
     asyncio.create_task(update_pattern())
     debug_led.on()
     while True:
@@ -203,6 +218,7 @@ async def main():
         else:
             global frame_count
             print("Memory:", gc.mem_free(), "Frames:", frame_count)
+            print("Pattern:", type(current_pattern).__name__ if current_pattern else "None", "GCode:", gcode, "Progress:", progress, "Chamber Light:", printer_chamber_light_on)
             frame_count = 0
         await asyncio.sleep(1.0)
 

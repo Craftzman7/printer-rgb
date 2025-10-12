@@ -5,6 +5,7 @@ class Pattern:
         # Optional number of LEDs in the strip. Patterns can use this when
         # rendering progress-based effects. Set by caller (e.g. main.py).
         self.num_leds = None
+        self.all_same = True
 
     def at(self, pos):
         pass
