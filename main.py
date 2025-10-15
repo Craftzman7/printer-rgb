@@ -25,7 +25,7 @@ debug_led = Pin('LED', Pin.OUT)
 serial = settings.get("serial", "none")
 brightness = settings.get("brightness", 0.5)
 num_leds = settings.get("num_leds", 64)
-led_pin = settings.get("led_pin", 4)
+led_pin = settings.get("led_pin", 0)
 mqtt_ip = settings.get("mqtt_ip", "192.168.1.117")
 current_pattern = Idle()
 frame_count = 0
@@ -63,7 +63,13 @@ if not connect_to_wifi():
     print("Failed to connect to WiFi, restarting...")
     for _ in range(5):
         debug_led.toggle()
+        for i in range(num_leds):
+            np[i] = (255, 0, 0)
+        np.write()
         sleep(1.0)
+        for i in range(num_leds):
+            np[i] = (0, 0, 0)
+        np.write()
     machine.reset()
 
 def sub_cb(_, msg, __):
@@ -189,7 +195,6 @@ config["keepalive"] = 3600
 
 async def main():
     client = MQTTClient(config)
-    await asyncio.sleep(settings.get("wait_time", 15)) # wait for printer to be ready
     try:
         await client.connect()
         print("Finished connecting to MQTT")
@@ -205,6 +210,7 @@ async def main():
     debug_led.on()
     while True:
         gc.collect()
+        global main_thread_rgb_lock
         if not client.isconnected():
             global main_thread_rgb_lock
             main_thread_rgb_lock = True
@@ -213,12 +219,14 @@ async def main():
                 np[i] = (255, 0, 0)
             np.write()
         elif main_thread_rgb_lock:
-            main_thread_rgb_lock = False
-            debug_led.on()
+            if client.isconnected():
+                global main_thread_rgb_lock
+                main_thread_rgb_lock = False
+                debug_led.on()
         else:
             global frame_count
             print("Memory:", gc.mem_free(), "Frames:", frame_count)
-            print("Pattern:", type(current_pattern).__name__ if current_pattern else "None", "GCode:", gcode, "Progress:", progress, "Chamber Light:", printer_chamber_light_on)
+            print("Pattern:", type(current_pattern).__name__ if current_pattern else "None", "GCode:", gcode, "Progress:", progress, "Chamber Light:", printer_chamber_light_on, "Stage:", stage)
             frame_count = 0
         await asyncio.sleep(1.0)
 

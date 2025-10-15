@@ -62,6 +62,7 @@ class Simulator:
                 pass
 
             pattern = self.patterns[self.current]
+            print(progress)
             pattern.update(now, progress)
 
             # Draw background
