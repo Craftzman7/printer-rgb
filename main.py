@@ -219,10 +219,9 @@ async def main():
                 np[i] = (255, 0, 0)
             np.write()
         elif main_thread_rgb_lock:
-            if client.isconnected():
-                global main_thread_rgb_lock
-                main_thread_rgb_lock = False
-                debug_led.on()
+            global main_thread_rgb_lock
+            main_thread_rgb_lock = False
+            debug_led.on()
         else:
             global frame_count
             print("Memory:", gc.mem_free(), "Frames:", frame_count)
@@ -251,4 +250,8 @@ async def main():
 #         client.check_msg()
 #         await asyncio.sleep(1.0)
 
-asyncio.run(main())
+try:
+    asyncio.run(main())
+except:
+    debug_led.off()
+
