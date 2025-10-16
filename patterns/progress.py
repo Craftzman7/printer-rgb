@@ -10,6 +10,7 @@ class Progress(Pattern):
         self.progress_pos = 0.0
         self.all_same = False
         self.index = 0
+        self.frac = 0
 
     def update(self, current_frame, progress=0.0):
         """Store the provided time/frame value for use by at().
@@ -22,6 +23,7 @@ class Progress(Pattern):
             self.progress = float(max(0.0, min(1.0, progress)))
             self.progress_pos = self.progress * self.num_leds
             self.index = int(self.progress_pos)
+            self.frac = self.progress_pos - self.index
         except Exception:
             # If conversion fails, just keep the previous value
             pass
@@ -31,10 +33,9 @@ class Progress(Pattern):
             # Fully reached
             return self.reached_color
         elif pos == self.index:
-            frac = self.progress_pos - self.index 
             # Partially faded in
             return tuple(
-                int(self.unreached_color[i] + (self.reached_color[i] - self.unreached_color[i]) * frac)
+                int(self.unreached_color[i] + (self.reached_color[i] - self.unreached_color[i]) * self.frac)
                 for i in range(3)
             )
         else:

@@ -39,7 +39,7 @@ class Simulator:
         self.running = True
         self.paused = False
         self.time_scale = 1.0
-        self.print_time = 60.0  # default print time in seconds
+        self.print_time = 60.0 * 50  # default print time in seconds
         self.brightness = 1.0
         self.start_time = time.time()
         try:
@@ -56,14 +56,13 @@ class Simulator:
                 now = (self.pause_time - self.start_time) * self.time_scale
 
             progress = now / self.print_time
-            # Throttle progress printing to avoid flooding the terminal.
             if self.clock is None or (self.clock.get_time() and self.clock.get_fps()):
-                # If clock available, we'll cap FPS below. Still print a lightweight status once per second.
                 pass
 
             pattern = self.patterns[self.current]
             print(progress)
             pattern.update(now, progress)
+            print(pattern.at(0))
 
             # Draw background
             self.screen.fill((10, 10, 10))
@@ -84,7 +83,7 @@ class Simulator:
 
             pygame.display.flip()
             if self.clock:
-                self.clock.tick(50)
+                self.clock.tick(80)
 
     def draw_text(self, text, x, y, size=14, color=(200, 200, 200)):
         if self.font is not None and self.font.get_height() == size:

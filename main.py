@@ -1,4 +1,4 @@
-from machine import Pin
+from machine import Pin, RTC
 from patterns.finish import Finish
 from patterns.paused import Paused
 from patterns.progress import Progress
@@ -23,7 +23,6 @@ with open('settings.json', 'r') as f:
 debug_led = Pin('LED', Pin.OUT)
 
 serial = settings.get("serial", "none")
-brightness = settings.get("brightness", 0.5)
 num_leds = settings.get("num_leds", 64)
 led_pin = settings.get("led_pin", 0)
 mqtt_ip = settings.get("mqtt_ip", "192.168.1.117")
@@ -70,6 +69,7 @@ if not connect_to_wifi():
         for i in range(num_leds):
             np[i] = (0, 0, 0)
         np.write()
+        sleep(1.0)
     machine.reset()
 
 def sub_cb(_, msg, __):
@@ -141,6 +141,7 @@ async def update_pattern():
             pattern_changed = True
         elif gcode == "IDLE" and not printer_chamber_light_on:
             current_pattern = None
+            pattern_changed = True
         elif gcode == "PAUSE" and not isinstance(current_pattern, Progress):
             # Orange progress bar
             current_pattern = Paused()
@@ -152,22 +153,26 @@ async def update_pattern():
             current_pattern = Prepare() 
             pattern_changed = True
 
-        if pattern_changed:
+        if pattern_changed and current_pattern is not None:
             global num_leds
             current_pattern.num_leds = num_leds
+            print("Pattern changed")
 
         if current_pattern:
             global progress
             current_pattern.update(time.time() - start_time, progress / 100.0)
             if current_pattern.all_same:
                 color = current_pattern.at(0)
-                for i in range(num_leds):
-                    np[i] = color
+                # Don't rewrite the pixels if the color hasn't changed
+                if np[0] != color:    
+                    for i in range(num_leds):
+                        np[i] = color
+                    np.write()
             else:
                 for i in range(num_leds):
                     color = current_pattern.at(i)
                     np[i] = color
-            np.write()
+                np.write()
         else:
             for i in range(num_leds):
                 np[i] = (0, 0, 0)
@@ -175,6 +180,7 @@ async def update_pattern():
 
         global frame_count
         frame_count += 1
+        print("Pixel 0:", np[0])
         # print("Memory:", gc.mem_free(), "Frames:", frame_count)
         await asyncio.sleep_ms(10)
 
