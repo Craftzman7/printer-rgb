@@ -128,6 +128,7 @@ async def update_pattern():
         pattern_changed = False
         global main_thread_rgb_lock
         if main_thread_rgb_lock:
+            await asyncio.sleep_ms(10)
             continue
         global current_pattern
         if len(hms) > 0 or gcode == "FAILED" and not isinstance(current_pattern, Error):
