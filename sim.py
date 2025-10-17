@@ -60,9 +60,8 @@ class Simulator:
                 pass
 
             pattern = self.patterns[self.current]
-            print(progress)
             pattern.update(now, progress)
-            print(pattern.at(0))
+            print(now)
 
             # Draw background
             self.screen.fill((10, 10, 10))

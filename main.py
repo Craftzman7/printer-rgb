@@ -2,7 +2,6 @@ from machine import Pin, RTC
 from patterns.finish import Finish
 from patterns.paused import Paused
 from patterns.progress import Progress
-from utime import sleep
 from modules.mqtt_as import MQTTClient, config
 # from modules.umqtt.simple import MQTTClient
 import ssl
@@ -13,6 +12,7 @@ import neopixel
 import machine
 import network
 import asyncio
+import ntptime
 from patterns.idle import Idle
 from patterns.error import Error
 from patterns.prepare import Prepare
@@ -37,8 +37,6 @@ stage = 0
 
 main_thread_rgb_lock = True
 
-start_time = time.time()
-
 np = neopixel.NeoPixel(machine.Pin(led_pin), num_leds)
 
 wlan = network.WLAN(network.STA_IF)
@@ -47,12 +45,12 @@ def connect_to_wifi():
     if not wlan.isconnected():
         print('Connecting to network: ' + settings.get("ssid", "") + ":" + settings.get("wifi_password", ""))
         wlan.connect(settings.get("ssid", ""), settings.get("wifi_password", ""))
-        sleep(5)
+        time.sleep(5)
         for _ in range(2):
             if wlan.isconnected():
                 break
             wlan.connect(settings.get("ssid", ""), settings.get("wifi_password", ""))
-            sleep(5)
+            time.sleep(5)
         if not wlan.isconnected():
             return False
     print('Network config:', wlan.ifconfig())
@@ -65,12 +63,17 @@ if not connect_to_wifi():
         for i in range(num_leds):
             np[i] = (255, 0, 0)
         np.write()
-        sleep(1.0)
+        time.sleep(1.0)
         for i in range(num_leds):
             np[i] = (0, 0, 0)
         np.write()
-        sleep(1.0)
+        time.sleep(1.0)
     machine.reset()
+
+rtc = RTC()
+ntptime.settime()
+print("Current time (UTC):", rtc.datetime())
+start_time = time.ticks_ms()
 
 def sub_cb(_, msg, __):
     data = msg.decode('utf-8')
@@ -131,44 +134,49 @@ async def update_pattern():
             await asyncio.sleep_ms(10)
             continue
         global current_pattern
-        if len(hms) > 0 or gcode == "FAILED" and not isinstance(current_pattern, Error):
-            current_pattern = Error()
-            pattern_changed = True
-        elif gcode == "RUNNING" and stage == 0 and not isinstance(current_pattern, Progress):
-            current_pattern = Progress()
-            pattern_changed = True
-        elif gcode == "IDLE" and printer_chamber_light_on and not isinstance(current_pattern, Idle):
-            current_pattern = Idle()
-            pattern_changed = True
-        elif gcode == "IDLE" and not printer_chamber_light_on:
+        if (len(hms) > 0 or gcode == "FAILED") and printer_chamber_light_on:
+            if not isinstance(current_pattern, Error):
+                current_pattern = Error()
+                pattern_changed = True
+        elif gcode == "RUNNING" and stage == 0 and printer_chamber_light_on:
+            if not isinstance(current_pattern, Progress):
+                current_pattern = Progress()
+                pattern_changed = True
+        elif gcode == "IDLE" and printer_chamber_light_on:
+            if not isinstance(current_pattern, Idle):
+                current_pattern = Idle()
+                pattern_changed = True
+        elif gcode == "PAUSE" and printer_chamber_light_on:
+            if not isinstance(current_pattern, Paused):
+                current_pattern = Paused()
+                pattern_changed = True
+        elif gcode == "FINISH" and printer_chamber_light_on:
+            if not isinstance(current_pattern, Finish):
+                current_pattern = Finish()
+                pattern_changed = True
+        elif (stage != 0 or gcode == "PREPARE") and printer_chamber_light_on:
+            if not isinstance(current_pattern, Prepare):    
+                current_pattern = Prepare() 
+                pattern_changed = True
+        else:
             current_pattern = None
             pattern_changed = True
-        elif gcode == "PAUSE" and not isinstance(current_pattern, Progress):
-            # Orange progress bar
-            current_pattern = Paused()
-            pattern_changed = True
-        elif gcode == "FINISH" and printer_chamber_light_on and not isinstance(current_pattern, Finish):
-            current_pattern = Finish()
-            pattern_changed = True
-        elif stage != 0 or gcode == "PREPARE" and not isinstance(current_pattern, Prepare):
-            current_pattern = Prepare() 
-            pattern_changed = True
 
-        if pattern_changed and current_pattern is not None:
+        if pattern_changed and current_pattern:
             global num_leds
             current_pattern.num_leds = num_leds
             print("Pattern changed")
 
         if current_pattern:
             global progress
-            current_pattern.update(time.time() - start_time, progress / 100.0)
+            now = (time.ticks_diff(start_time, time.ticks_ms())) / 1000
+            print(now)
+            current_pattern.update(now, progress / 100.0)
             if current_pattern.all_same:
                 color = current_pattern.at(0)
-                # Don't rewrite the pixels if the color hasn't changed
-                if np[0] != color:    
-                    for i in range(num_leds):
-                        np[i] = color
-                    np.write()
+                for i in range(num_leds):
+                    np[i] = color
+                np.write()
             else:
                 for i in range(num_leds):
                     color = current_pattern.at(i)
@@ -181,7 +189,6 @@ async def update_pattern():
 
         global frame_count
         frame_count += 1
-        print("Pixel 0:", np[0])
         # print("Memory:", gc.mem_free(), "Frames:", frame_count)
         await asyncio.sleep_ms(10)
 

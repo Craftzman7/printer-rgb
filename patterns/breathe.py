@@ -44,14 +44,9 @@ class Breathe(Pattern):
 
     def at(self, pos):
         """Return an RGB tuple for position `pos` using base_color scaled by brightness."""
-        # Compute and cache color for the current frame to avoid allocating
-        # a new tuple for every LED. Many patterns call at() for every LED
-        # each frame; caching reduces allocations and GC pressure on long runs.
-        if getattr(self, '_cached_frame', None) != self.last_frame:
-            b = self.brightness()
-            r = int(max(0, min(255, round(self.base_color[0] * b))))
-            g = int(max(0, min(255, round(self.base_color[1] * b))))
-            bl = int(max(0, min(255, round(self.base_color[2] * b))))
-            self._cached_color = (r, g, bl)
-            self._cached_frame = self.last_frame
-        return self._cached_color
+        b = self.brightness()
+        r = int(max(0, min(255, round(self.base_color[0] * b))))
+        g = int(max(0, min(255, round(self.base_color[1] * b))))
+        bl = int(max(0, min(255, round(self.base_color[2] * b))))
+
+        return (r, g, bl)

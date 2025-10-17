@@ -21,4 +21,5 @@ class Pattern:
             self.progress = float(max(0.0, min(1.0, progress)))
         except Exception:
             # If conversion fails, just keep the previous value
+            print("Conversion on update failed")
             pass
